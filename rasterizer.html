@@ -1,0 +1,48 @@
+<!doctype html>
+<script src="port-messenger.js"></script>
+<script>
+function loadImg(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(Error('Image load failed'));
+    img.src = url;
+  });
+}
+
+function drawImage(img, width, height, {
+  sx = 0, sy = 0, sw = width, sh = height
+}={}) {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d');
+  context.fillStyle = '#fff';
+  context.fillRect(0, 0, width, height);
+  context.drawImage(img, sx, sy, sw, sh, 0, 0, width, height);
+  return context;
+}
+
+const imgs = new Map();
+const worker = new PortCaller(new SharedWorker('worker.js').port);
+
+portListener(worker.port, {
+  rasterize(url, sx, sy, sw, sh, width, height) {
+    let imgPromise = imgs.get(url);
+    if (!imgPromise) {
+      imgPromise = loadImg(url);
+      imgs.set(url, imgPromise);
+    }
+
+    return imgPromise.then(img => {
+      return drawImage(img, width, height, {sx, sy, sw, sh}).getImageData(0, 0, width, height);
+    });
+  }
+});
+
+worker.send('setType', 'rasterizer');
+
+window.onunload = () => {
+  worker.send('remove');
+};
+</script>

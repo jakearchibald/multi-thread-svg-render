@@ -1,0 +1,139 @@
+<!doctype html>
+<script src="openseadragon.js"></script>
+<script src="port-messenger.js"></script>
+<div id="img-test" style="height: 500px; background: #ccc"></div>
+<a href="rasterizer.html" target="_blank" rel="noopener">Open rasterizer</button>
+<script>
+function loadImg(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(Error('Image load failed'));
+    img.src = url;
+  });
+}
+
+function drawImage(img, width, height, {
+  sx = 0, sy = 0, sw = width, sh = height
+}={}) {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d');
+  context.fillStyle = '#fff';
+  context.fillRect(0, 0, width, height);
+  context.drawImage(img, sx, sy, sw, sh, 0, 0, width, height);
+
+  //context.font = 'normal 10px sans-serif';
+  //context.textBaseline = 'top';
+  //context.fillStyle = '#000';
+  //context.fillText(`OK LET'S GO`, 0, 0);
+  //.context.fillText(`${scale}, ${x}, ${y}`, 0, 0);
+  //context.fillText(`${Math.round(sx)}, ${Math.round(sy)}, ${Math.round(sw)}, ${Math.round(sh)}`, 0, 0);
+  return canvas;
+}
+
+function imageDataToCanvas(data) {
+  const canvas = document.createElement('canvas');
+  canvas.width = data.width;
+  canvas.height = data.height;
+  const context = canvas.getContext('2d');
+  context.putImageData(data, 0, 0);
+  return canvas;
+}
+
+loadImg('car.svg').then(img => {
+  const instance = OpenSeadragon({
+    id: "img-test",
+    prefixUrl: './images/',
+    minZoomImageRatio: 0,
+    defaultZoomLevel: 1
+  });
+
+  const svgScale = 1000;
+  const width = img.width;
+  const height = img.height;
+  const tileSize = 256;
+  let workerCount = 0;
+
+  instance.imageLoader = {
+    addJob({ src, callback }) {
+      const [scale, x, y] = src;
+      const adjustedScale = (scale * svgScale);
+      const sx = ((x * tileSize) / adjustedScale);
+      const sy = ((y * tileSize) / adjustedScale);
+      let sw = (tileSize / adjustedScale);
+      let sh = (tileSize / adjustedScale);
+      let tileW = tileSize;
+      let tileH = tileSize;
+
+      if (sx + sw > img.width) {
+        tileW *= (img.width - sx) / sw;
+        sw = img.width - sx;
+      }
+
+      if (sy + sh > img.height) {
+        tileH *= (img.height - sy) / sh;
+        sh = img.height - sy;
+      }
+
+      if (workerCount) {
+        worker.call('rasterize', img.src, sx, sy, sw, sh, tileW, tileH).then(data => {
+          callback(imageDataToCanvas(data))
+        });
+      }
+      else {
+        callback(
+          drawImage(img, tileW, tileH, {
+            sx, sy, sw, sh
+          })
+        );
+      }
+
+    },
+    clear() {
+      // this method is expected to be defined
+    }
+  };
+
+  instance.open({
+    width: width * svgScale,
+    height: height * svgScale,
+    tileSize,
+    tileOverlap: 0,
+    getTileUrl(level, x, y) {
+      const result = [this.getLevelScale(level), x, y];
+      // hack because other parts expect this to be a string
+      result.match = () => false;
+      return result;
+    }
+  });
+
+  const worker = new PortCaller(new SharedWorker('worker.js').port);
+
+  worker.send('setType', 'client');
+
+  worker.call('getRasterizerCount').then(val => {
+    workerCount = val;
+    console.log('GOT', val);
+  });
+
+  portListener(worker.port, {
+    updateRasterizerCount(count) {
+      workerCount = count;
+      console.log('new rasterizer count', workerCount);
+    }
+  });
+
+  /*
+  worker.port.onmessage = event => {
+    const {action, value} = event.data;
+
+    if (action == 'rasterizer-count-update') {
+      workerCount = value;
+      console.log('new rasterizer count', workerCount);
+    }
+  };
+  */
+});
+</script>
